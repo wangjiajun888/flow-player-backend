@@ -153,6 +153,7 @@ def download_video(url, outdir, cookies=""):
     cmd = [
         "yt-dlp", "-f", "best[height<=720]/best[ext=mp4]/best",
         "--no-playlist", "--restrict-filenames",
+        "--extractor-args", "douyin:download_type=video",
         "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
         "-o", tmpl,
     ]
