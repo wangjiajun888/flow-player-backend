@@ -26,8 +26,37 @@ class TranscribeResp(BaseModel):
 def check_tools():
     if not shutil.which("yt-dlp"):
         raise RuntimeError("yt-dlp not found")
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("ffmpeg not found")
+    ffmpeg_path = find_ffmpeg()
+    if not ffmpeg_path:
+        raise RuntimeError("ffmpeg not found. Looked in PATH and common locations.")
+    # Use the found path for subprocess calls
+    os.environ["FFMPEG_PATH"] = ffmpeg_path
+
+def find_ffmpeg():
+    """Search for ffmpeg in PATH and common Nix/apt locations."""
+    # Check PATH first
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    # Common Nix store paths
+    nix_paths = [
+        "/nix/var/nix/profiles/default/bin/ffmpeg",
+        "/home/railway/.nix-profile/bin/ffmpeg",
+        "/root/.nix-profile/bin/ffmpeg",
+        "/run/current-system/sw/bin/ffmpeg",
+    ]
+    for p in nix_paths:
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    # Try finding ffmpeg in /nix/store
+    try:
+        import glob
+        matches = glob.glob("/nix/store/*/bin/ffmpeg")
+        if matches:
+            return sorted(matches)[-1]  # newest version
+    except Exception:
+        pass
+    return None
 
 def download_video(url, outdir):
     tmpl = os.path.join(outdir, "%(id)s.%(ext)s")
@@ -56,7 +85,7 @@ def download_video(url, outdir):
 def extract_audio(vpath, outdir):
     apath = os.path.join(outdir, "audio.mp3")
     r = subprocess.run([
-        "ffmpeg", "-i", vpath, "-vn", "-acodec", "libmp3lame",
+        os.environ.get("FFMPEG_PATH", find_ffmpeg() or "ffmpeg"), "-i", vpath, "-vn", "-acodec", "libmp3lame",
         "-ar", "16000", "-ac", "1", "-b:a", "64k", "-y", apath
     ], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
@@ -78,6 +107,19 @@ def transcribe(apath, api_key):
         m, sec = divmod(s, 60)
         lines.append(f"[{m:02d}:{sec:02d}] {seg['text'].strip()}")
     return "\n".join(lines)
+
+
+@app.get("/api/debug")
+async def debug():
+    import sys
+    return {
+        "python": sys.version,
+        "yt_dlp": shutil.which("yt-dlp") or "NOT FOUND",
+        "ffmpeg_path": shutil.which("ffmpeg") or "NOT IN PATH",
+        "ffmpeg_found": find_ffmpeg() or "NOT FOUND",
+        "PATH_dirs": os.environ.get("PATH", "").split(":")[:5],
+        "platform": sys.platform,
+    }
 
 @app.get("/api/health")
 async def health():
