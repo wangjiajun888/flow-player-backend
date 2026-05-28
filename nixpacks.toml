@@ -1,6 +1,8 @@
 [phases.setup]
-nixPkgs = ["ffmpeg"]
-aptPackages = ["ffmpeg"]
+aptPackages = ["ffmpeg", "curl", "xz-utils"]
+
+[phases.build]
+cmds = ["curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp && cp /tmp/ffmpeg-*-amd64-static/ffmpeg /tmp/ffmpeg-*-amd64-static/ffprobe /app/.venv/bin/ && chmod +x /app/.venv/bin/ffmpeg /app/.venv/bin/ffprobe"]
 
 [start]
 cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
