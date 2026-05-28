@@ -1,4 +1,8 @@
-﻿import os, tempfile, subprocess, shutil, uuid, stat
+﻿import os, tempfile, subprocess, shutil, uuid, stat, json
+try:
+    import requests as req_lib
+except ImportError:
+    req_lib = None
 import urllib.request, tarfile
 import glob as _glob
 from pathlib import Path
@@ -90,6 +94,59 @@ def check_tools():
     if not ffmpeg_path:
         raise RuntimeError("ffmpeg not found and download failed")
 
+def download_via_thirdparty(url, outdir):
+    """Try third-party APIs for Douyin/Kuaishou videos. Returns (filepath, duration) or raises."""
+    # Try tikwm.com API for Douyin
+    if "douyin.com" in url or "tiktok.com" in url:
+        try:
+            api_url = "https://www.tikwm.com/api/"
+            r = req_lib.post(api_url, data={"url": url}, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            data = r.json()
+            if data.get("code") == 0 and data.get("data"):
+                video_url = data["data"].get("play") or data["data"].get("hdplay") or data["data"].get("wmplay")
+                if video_url:
+                    vpath = os.path.join(outdir, "video.mp4")
+                    vr = req_lib.get(video_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=120)
+                    with open(vpath, "wb") as vf:
+                        vf.write(vr.content)
+                    if os.path.getsize(vpath) > 1000:
+                        return vpath, float(data["data"].get("duration", 0))
+        except Exception:
+            pass
+
+    # Try for Kuaishou
+    if "kuaishou.com" in url or "kuaishou" in url:
+        try:
+            # Use a simple approach - try to get the video URL from the page
+            headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"}
+            page = req_lib.get(url, headers=headers, timeout=15, allow_redirects=True)
+            html = page.text
+            # Look for video URL in page source
+            import re
+            patterns = [
+                r'srcNoMark\s*:\s*"([^"]+\.mp4[^"]*)"',
+                r'videoSrc\s*:\s*"([^"]+)"',
+                r'"playUrl"\s*:\s*"([^"]+)"',
+                r'<video[^>]+src="([^"]+\.mp4[^"]*)"',
+            ]
+            for pat in patterns:
+                m = re.search(pat, html)
+                if m:
+                    video_url = m.group(1).replace("\\u002F", "/")
+                    if not video_url.startswith("http"):
+                        continue
+                    vpath = os.path.join(outdir, "video.mp4")
+                    vr = req_lib.get(video_url, headers=headers, timeout=120)
+                    with open(vpath, "wb") as vf:
+                        vf.write(vr.content)
+                    if os.path.getsize(vpath) > 1000:
+                        return vpath, 0.0
+        except Exception:
+            pass
+
+    raise RuntimeError("Third-party API download failed")
+
+def download_video(url, outdir, cookies=""):
 def download_video(url, outdir, cookies=""):
     """Download video using yt-dlp. Returns (filepath, duration)."""
     tmpl = os.path.join(outdir, "%(title)s.%(ext)s")
@@ -186,7 +243,14 @@ async def transcribe_video(req: TranscribeReq):
     tmp = tempfile.mkdtemp(prefix="fp_")
     try:
         check_tools()
-        vpath, dur = download_video(req.url.strip(), tmp, req.cookies)
+        try:
+            vpath, dur = download_video(req.url.strip(), tmp, req.cookies)
+        except RuntimeError as e1:
+            # Fallback to third-party API
+            try:
+                vpath, dur = download_via_thirdparty(req.url.strip(), tmp)
+            except RuntimeError as e2:
+                raise RuntimeError("yt-dlp failed: " + str(e1) + "; thirdparty failed: " + str(e2))
         apath = extract_audio(vpath, tmp)
         text = transcribe(apath, req.api_key or OPENAI_API_KEY)
         return TranscribeResp(text=text, duration=dur, success=True)
