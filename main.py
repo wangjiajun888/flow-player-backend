@@ -90,35 +90,39 @@ def check_tools():
         raise RuntimeError("ffmpeg not found and download failed")
 
 def download_video(url, outdir):
-    tmpl = os.path.join(outdir, "%(id)s.%(ext)s")
-    r = subprocess.run([
+    """Download video using yt-dlp. Returns (filepath, duration)."""
+    tmpl = os.path.join(outdir, "%(title)s.%(ext)s")
+    cmd = [
         "yt-dlp", "-f", "best[height<=720]/best",
-        "--match-filter", "duration < " + str(MAX_DURATION), "--no-playlist",
-        "--restrict-filenames", "-o", tmpl,
-        "--print", "filename", "--print", "duration", url
-    ], capture_output=True, text=True, timeout=120, cwd=outdir)
-    if r.returncode != 0:
-        detail = (r.stderr + r.stdout)[-500:]
-        raise RuntimeError("Download failed: " + detail)
-    lines_out = [l.strip() for l in r.stdout.strip().split("\n") if l.strip()]
-    if len(lines_out) < 2:
-        found = [f for f in os.listdir(outdir) if os.path.splitext(f)[1].lower() in [".mp4",".webm",".mkv",".mov",".flv"]]
-        if found:
-            vpath = os.path.join(outdir, found[0])
-            return vpath, 0.0
-        raise RuntimeError("No video info. stdout: " + r.stdout[-300:] + " stderr: " + r.stderr[-300:])
-    vpath = lines_out[-2]
-    try:
-        dur = float(lines_out[-1])
-    except ValueError:
-        dur = 0.0
-    if not os.path.exists(vpath):
-        for f in os.listdir(outdir):
-            if os.path.splitext(f)[1].lower() in [".mp4",".webm",".mkv",".mov",".flv"]:
-                vpath = os.path.join(outdir, f)
-                break
-    if not os.path.exists(vpath):
-        raise RuntimeError("Video file not found: " + vpath + ". Dir: " + str(os.listdir(outdir)))
+        "--no-playlist", "--restrict-filenames",
+        "-o", tmpl, url
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=outdir)
+
+    # Check for downloaded files regardless of return code
+    video_exts = [".mp4", ".webm", ".mkv", ".mov", ".flv", ".m4a", ".mp3"]
+    found = []
+    for f in os.listdir(outdir):
+        ext = os.path.splitext(f)[1].lower()
+        if ext in video_exts:
+            found.append(os.path.join(outdir, f))
+
+    if not found:
+        detail = (r.stderr + "\n" + r.stdout)[-600:]
+        raise RuntimeError("Download failed, no video file produced. Output: " + detail)
+
+    vpath = found[0]
+    # Try to get duration from yt-dlp output
+    dur = 0.0
+    for line in (r.stdout + r.stderr).split("\n"):
+        if "duration" in line.lower():
+            try:
+                import re
+                m = re.search(r"duration[:\s]*(\d+\.?\d*)", line, re.IGNORECASE)
+                if m:
+                    dur = float(m.group(1))
+            except Exception:
+                pass
     return vpath, dur
 
 def extract_audio(vpath, outdir):
