@@ -98,19 +98,27 @@ def download_video(url, outdir):
         "--print", "filename", "--print", "duration", url
     ], capture_output=True, text=True, timeout=120, cwd=outdir)
     if r.returncode != 0:
-        raise RuntimeError("Download failed: " + r.stderr[-300:])
-    lines = r.stdout.strip().split("\n")
-    if len(lines) < 2:
-        raise RuntimeError("No video info")
-    vpath = lines[-2].strip()
-    dur = float(lines[-1].strip()) if len(lines) >= 2 else 0.0
+        detail = (r.stderr + r.stdout)[-500:]
+        raise RuntimeError("Download failed: " + detail)
+    lines_out = [l.strip() for l in r.stdout.strip().split("\n") if l.strip()]
+    if len(lines_out) < 2:
+        found = [f for f in os.listdir(outdir) if os.path.splitext(f)[1].lower() in [".mp4",".webm",".mkv",".mov",".flv"]]
+        if found:
+            vpath = os.path.join(outdir, found[0])
+            return vpath, 0.0
+        raise RuntimeError("No video info. stdout: " + r.stdout[-300:] + " stderr: " + r.stderr[-300:])
+    vpath = lines_out[-2]
+    try:
+        dur = float(lines_out[-1])
+    except ValueError:
+        dur = 0.0
     if not os.path.exists(vpath):
         for f in os.listdir(outdir):
             if os.path.splitext(f)[1].lower() in [".mp4",".webm",".mkv",".mov",".flv"]:
                 vpath = os.path.join(outdir, f)
                 break
     if not os.path.exists(vpath):
-        raise RuntimeError("Video file not found: " + vpath)
+        raise RuntimeError("Video file not found: " + vpath + ". Dir: " + str(os.listdir(outdir)))
     return vpath, dur
 
 def extract_audio(vpath, outdir):
