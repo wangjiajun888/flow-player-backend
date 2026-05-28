@@ -93,7 +93,7 @@ def download_video(url, outdir):
     tmpl = os.path.join(outdir, "%(id)s.%(ext)s")
     r = subprocess.run([
         "yt-dlp", "-f", "best[height<=720]/best",
-        "--max-duration", str(MAX_DURATION), "--no-playlist",
+        "--match-filter", "duration < " + str(MAX_DURATION), "--no-playlist",
         "--restrict-filenames", "-o", tmpl,
         "--print", "filename", "--print", "duration", url
     ], capture_output=True, text=True, timeout=120, cwd=outdir)
