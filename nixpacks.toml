@@ -1,8 +1,5 @@
 ﻿[phases.setup]
 aptPkgs = ["ffmpeg"]
 
-[phases.install]
-cmds = ["pip install -r requirements.txt"]
-
 [start]
-cmd = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+cmd = "sh -c 'uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}'"
