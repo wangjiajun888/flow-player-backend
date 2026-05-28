@@ -18,6 +18,7 @@ MAX_DURATION = int(os.getenv("MAX_VIDEO_DURATION", "600"))
 class TranscribeReq(BaseModel):
     url: str
     api_key: str = ""
+    cookies: str = ""  # Netscape cookie format for platforms needing login
 
 class TranscribeResp(BaseModel):
     text: str = ""
@@ -89,14 +90,23 @@ def check_tools():
     if not ffmpeg_path:
         raise RuntimeError("ffmpeg not found and download failed")
 
-def download_video(url, outdir):
+def download_video(url, outdir, cookies=""):
     """Download video using yt-dlp. Returns (filepath, duration)."""
     tmpl = os.path.join(outdir, "%(title)s.%(ext)s")
     cmd = [
-        "yt-dlp", "-f", "best[height<=720]/best",
+        "yt-dlp", "-f", "best[height<=720]/best[ext=mp4]/best",
         "--no-playlist", "--restrict-filenames",
-        "-o", tmpl, url
+        "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "-o", tmpl,
     ]
+    # Write cookies to temp file if provided
+    cookie_file = None
+    if cookies and cookies.strip():
+        cookie_file = os.path.join(outdir, "cookies.txt")
+        with open(cookie_file, "w", encoding="utf-8") as cf:
+            cf.write(cookies.strip())
+        cmd.extend(["--cookies", cookie_file])
+    cmd.append(url)
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=outdir)
 
     # Check for downloaded files regardless of return code
@@ -176,7 +186,7 @@ async def transcribe_video(req: TranscribeReq):
     tmp = tempfile.mkdtemp(prefix="fp_")
     try:
         check_tools()
-        vpath, dur = download_video(req.url.strip(), tmp)
+        vpath, dur = download_video(req.url.strip(), tmp, req.cookies)
         apath = extract_audio(vpath, tmp)
         text = transcribe(apath, req.api_key or OPENAI_API_KEY)
         return TranscribeResp(text=text, duration=dur, success=True)
