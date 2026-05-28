@@ -2,7 +2,7 @@ import os, tempfile, subprocess, shutil, uuid, stat
 import urllib.request, tarfile
 import glob as _glob
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -138,25 +138,6 @@ async def debug():
         "ffmpeg": ensure_ffmpeg() or "NOT FOUND",
         "platform": sys.platform,
     }
-
-@app.post("/api/transcribe-audio", response_model=TranscribeResp)
-async def transcribe_audio(audio: UploadFile = File(...), api_key: str = ""):
-    """Transcribe uploaded audio file directly via Whisper."""
-    tmp = tempfile.mkdtemp(prefix="fp_audio_")
-    try:
-        # Save uploaded file
-        ext = os.path.splitext(audio.filename or "audio.wav")[1] or ".wav"
-        apath = os.path.join(tmp, f"audio{ext}")
-        with open(apath, "wb") as f:
-            f.write(await audio.read())
-        text = transcribe(apath, api_key or OPENAI_API_KEY)
-        return TranscribeResp(text=text, duration=0, success=True)
-    except RuntimeError as e:
-        return TranscribeResp(success=False, error=str(e))
-    except Exception as e:
-        return TranscribeResp(success=False, error="Error: " + str(e))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
 
 @app.get("/api/health")
 async def health():
