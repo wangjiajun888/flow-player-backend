@@ -1,4 +1,6 @@
-﻿import os, tempfile, subprocess, shutil, uuid
+﻿import os, tempfile, subprocess, shutil, uuid, stat
+import urllib.request, tarfile
+import glob as _glob
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,40 +25,69 @@ class TranscribeResp(BaseModel):
     success: bool = True
     error: str = ""
 
-def check_tools():
-    if not shutil.which("yt-dlp"):
-        raise RuntimeError("yt-dlp not found")
-    ffmpeg_path = find_ffmpeg()
-    if not ffmpeg_path:
-        raise RuntimeError("ffmpeg not found. Looked in PATH and common locations.")
-    # Use the found path for subprocess calls
-    os.environ["FFMPEG_PATH"] = ffmpeg_path
 
-def find_ffmpeg():
-    """Search for ffmpeg in PATH and common Nix/apt locations."""
-    # Check PATH first
-    found = shutil.which("ffmpeg")
-    if found:
-        return found
-    # Common Nix store paths
-    nix_paths = [
+_FFMPEG_CACHED = None
+
+def ensure_ffmpeg():
+    """Find or download ffmpeg binary. Returns path or None."""
+    global _FFMPEG_CACHED
+    if _FFMPEG_CACHED:
+        return _FFMPEG_CACHED
+
+    # 1) Already in PATH
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        _FFMPEG_CACHED = ffmpeg
+        return ffmpeg
+
+    # 2) Already downloaded locally
+    local_bin = os.path.join(tempfile.gettempdir(), "fp_bin")
+    ffmpeg = os.path.join(local_bin, "ffmpeg")
+    if os.path.isfile(ffmpeg) and os.access(ffmpeg, os.X_OK):
+        _FFMPEG_CACHED = ffmpeg
+        return ffmpeg
+
+    # 3) Search common paths
+    for p in [
         "/nix/var/nix/profiles/default/bin/ffmpeg",
         "/home/railway/.nix-profile/bin/ffmpeg",
         "/root/.nix-profile/bin/ffmpeg",
         "/run/current-system/sw/bin/ffmpeg",
-    ]
-    for p in nix_paths:
+    ]:
         if os.path.isfile(p) and os.access(p, os.X_OK):
+            _FFMPEG_CACHED = p
             return p
-    # Try finding ffmpeg in /nix/store
+
+    for p in _glob.glob("/nix/store/*/bin/ffmpeg"):
+        if os.path.isfile(p):
+            _FFMPEG_CACHED = p
+            return p
+
+    # 4) Download static build
     try:
-        import glob
-        matches = glob.glob("/nix/store/*/bin/ffmpeg")
-        if matches:
-            return sorted(matches)[-1]  # newest version
+        os.makedirs(local_bin, exist_ok=True)
+        url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+        tar_path = os.path.join(local_bin, "ffmpeg.tar.xz")
+        urllib.request.urlretrieve(url, tar_path)
+        with tarfile.open(tar_path, "r:xz") as tar:
+            for member in tar.getmembers():
+                name = os.path.basename(member.name)
+                if name in ("ffmpeg", "ffprobe"):
+                    member.name = name
+                    tar.extract(member, local_bin)
+        os.chmod(ffmpeg, os.stat(ffmpeg).st_mode | stat.S_IEXEC)
+        os.unlink(tar_path)
+        _FFMPEG_CACHED = ffmpeg
+        return ffmpeg
     except Exception:
-        pass
-    return None
+        return None
+
+def check_tools():
+    if not shutil.which("yt-dlp"):
+        raise RuntimeError("yt-dlp not found")
+    ffmpeg_path = ensure_ffmpeg()
+    if not ffmpeg_path:
+        raise RuntimeError("ffmpeg not found and download failed")
 
 def download_video(url, outdir):
     tmpl = os.path.join(outdir, "%(id)s.%(ext)s")
@@ -85,7 +116,7 @@ def download_video(url, outdir):
 def extract_audio(vpath, outdir):
     apath = os.path.join(outdir, "audio.mp3")
     r = subprocess.run([
-        os.environ.get("FFMPEG_PATH", find_ffmpeg() or "ffmpeg"), "-i", vpath, "-vn", "-acodec", "libmp3lame",
+        ensure_ffmpeg() or "ffmpeg", "-i", vpath, "-vn", "-acodec", "libmp3lame",
         "-ar", "16000", "-ac", "1", "-b:a", "64k", "-y", apath
     ], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
@@ -116,7 +147,7 @@ async def debug():
         "python": sys.version,
         "yt_dlp": shutil.which("yt-dlp") or "NOT FOUND",
         "ffmpeg_path": shutil.which("ffmpeg") or "NOT IN PATH",
-        "ffmpeg_found": find_ffmpeg() or "NOT FOUND",
+        "ffmpeg_found": ensure_ffmpeg() or "NOT FOUND",
         "PATH_dirs": os.environ.get("PATH", "").split(":")[:5],
         "platform": sys.platform,
     }
