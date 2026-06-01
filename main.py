@@ -161,5 +161,43 @@ async def transcribe_video(req: TranscribeReq):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+
+# ====== History API ======
+import json as _json
+from pathlib import Path as _Path
+
+HISTORY_DIR = _Path(__file__).parent / "history_data"
+HISTORY_DIR.mkdir(exist_ok=True)
+
+class HistorySaveReq(BaseModel):
+    userId: str
+    history: list  # [{section, mode, name, icon, msgs: [{role, content}]}]
+
+@app.post("/api/history/save")
+async def save_history(req: HistorySaveReq):
+    if not req.userId or not req.userId.strip():
+        raise HTTPException(400, "Missing userId")
+    fpath = HISTORY_DIR / f"{req.userId}.json"
+    try:
+        with open(fpath, "w", encoding="utf-8") as f:
+            _json.dump(req.history, f, ensure_ascii=False)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/api/history/load")
+async def load_history(userId: str = ""):
+    if not userId or not userId.strip():
+        raise HTTPException(400, "Missing userId")
+    fpath = HISTORY_DIR / f"{userId}.json"
+    if not fpath.exists():
+        return {"success": True, "history": []}
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        return {"success": True, "history": data}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
